@@ -94,6 +94,8 @@ while True:
             if id == 2:
                 center_x2, center_y2 = center_x, center_y
             
+            
+            
             # 原点偏移计算
             VEC_SIZE = 2
             vec = VEC_SIZE * (pts[2] - pts[1])
@@ -128,6 +130,7 @@ while True:
 
     if cv2.waitKey(1) == 13:
         set_angle(ROTATE_PIN, 0)
+        
         
 
 
