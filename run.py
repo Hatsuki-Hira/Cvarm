@@ -52,29 +52,32 @@ def set_angle(pin, angle):
 
 
 
-def calculate_angles(target_x, target_y, L):
-    # 计算距离平方
-    D_squared = target_x**2 + target_y**2
-    D = math.sqrt(D_squared)
+def calculate_angles(x, y):  # 输入目标坐标
+    L1 = 10
+    L2 = 10
+    D_sq = x**2 + y**2
+    D = math.sqrt(D_sq)
     
-    # 是否超出机械臂的航程（2L）
-    if D > 2 * L:
-        print("[error]目标太远，够不着！")
+    # 距离检查
+    if D > (L1 + L2) or D < abs(L1 - L2):
+        print("[error]目标超出机械臂工作范围")
         return None
 
-    # 3. 计算 theta2 (小臂角度)
-    # cos(theta2) = (D^2 - 2L^2) / 2L^2
-    cos_theta2 = (D_squared / (2 * L**2)) - 1
-    # 防止浮点数精度问题导致溢出
+    # 计算 theta2 (小臂相对于大臂的角度)
+    cos_theta2 = (D_sq - L1**2 - L2**2) / (2 * L1 * L2)
+    # 限制范围防止精度溢出
     cos_theta2 = max(-1, min(1, cos_theta2))
     theta2 = math.acos(cos_theta2)
 
-    # 4. 计算 theta1 (大臂角度)
-    alpha = math.atan2(target_y, target_x)
-    # 因为等长，内部补偿角正好是 theta2 的一半
-    theta1 = alpha - (theta2 / 2) # 这里选一种折叠方式
-
-    # 转换为角度制
+    # 计算 theta1 (大臂相对于基座的角度)
+    alpha = math.atan2(y, x)
+    
+    cos_beta = (L1**2 + D_sq - L2**2) / (2 * L1 * D)
+    cos_beta = max(-1, min(1, cos_beta))
+    beta = math.acos(cos_beta)
+    
+    theta1 = alpha - beta # 肘部向上模式
+    
     return math.degrees(theta1), math.degrees(theta2)
 
 
@@ -129,8 +132,8 @@ while True:
                 center_x4, center_y4 = center_x, center_y
             
             # 原点偏移计算
-            VEC_SIZE = 2
-            vec = VEC_SIZE * (pts[2] - pts[1])
+            VEC_SCALE = 2
+            vec = VEC_SCALE * (pts[2] - pts[1])
             
             # 原点计算
             origin_x = (center_x1 + center_x2) / 2 + vec[0]
