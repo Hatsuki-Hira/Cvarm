@@ -1,0 +1,7 @@
+/.venv
+**/__pycache__
+/cap.yolov8
+/runs
+/yolo11n.pt
+/yolov8n.pt
+/temp.py
