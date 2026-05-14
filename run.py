@@ -3,6 +3,7 @@ import cv2.aruco as aruco
 from ultralytics import YOLO
 import time
 import numpy as np
+import math
 
 import wiringop
 
@@ -51,6 +52,33 @@ def set_angle(pin, angle):
 
 
 
+def calculate_angles(target_x, target_y, L):
+    # 计算距离平方
+    D_squared = target_x**2 + target_y**2
+    D = math.sqrt(D_squared)
+    
+    # 是否超出机械臂的航程（2L）
+    if D > 2 * L:
+        print("[error]目标太远，够不着！")
+        return None
+
+    # 3. 计算 theta2 (小臂角度)
+    # cos(theta2) = (D^2 - 2L^2) / 2L^2
+    cos_theta2 = (D_squared / (2 * L**2)) - 1
+    # 防止浮点数精度问题导致溢出
+    cos_theta2 = max(-1, min(1, cos_theta2))
+    theta2 = math.acos(cos_theta2)
+
+    # 4. 计算 theta1 (大臂角度)
+    alpha = math.atan2(target_y, target_x)
+    # 因为等长，内部补偿角正好是 theta2 的一半
+    theta1 = alpha - (theta2 / 2) # 这里选一种折叠方式
+
+    # 转换为角度制
+    return math.degrees(theta1), math.degrees(theta2)
+
+
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -89,12 +117,16 @@ while True:
 
                 # 平均边长
                 aruco_length_pixel = np.mean(edge_lengths)
-                print(f"平均边长: {aruco_length_pixel:.2f}")
+                print(f"[log]平均边长: {aruco_length_pixel:.2f}")
                 
             if id == 2:
                 center_x2, center_y2 = center_x, center_y
             
-            
+            if id == 3:
+                center_x3, center_y3 = center_x, center_y
+
+            if id == 4:
+                center_x4, center_y4 = center_x, center_y
             
             # 原点偏移计算
             VEC_SIZE = 2
@@ -104,7 +136,7 @@ while True:
             origin_x = (center_x1 + center_x2) / 2 + vec[0]
             origin_y = (center_y1 + center_y2) / 2 + vec[1]
             cv2.circle(frame, (int(origin_x), int(origin_y)), 5, (255, 0, 0), -1)
-            print(f"[test]原点坐标({origin_x}, {origin_y})")
+            print(f"[log]原点坐标({origin_x}, {origin_y})")
 
 
 
@@ -130,9 +162,9 @@ while True:
 
     if cv2.waitKey(1) == 13:
         set_angle(ROTATE_PIN, 0)
+        cv2.waitKey(500)
+        distance_id3 = math.sqrt((center_x3-center_x)**2+(center_y3-center_y)**2)
         
-        
-
 
 
 
@@ -140,8 +172,6 @@ while True:
 
     # ESC退出
     if cv2.waitKey(1) == 27:
-        time.sleep(2000)
-        print("ok")
         break
 
 cap.release()
