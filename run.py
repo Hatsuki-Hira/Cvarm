@@ -1,25 +1,30 @@
 import cv2
 import cv2.aruco as aruco
-from ultralytics import YOLO
+#from ultralytics import YOLO
 import time
 import numpy as np
 import math
+import threading
 
-import wiringop
+import wiringpi
 
 
 
 # 初始化摄像头
 cap = cv2.VideoCapture(1)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+cap.set(cv2.CAP_PROP_CONTRAST, 100)
+cap.set(cv2.CAP_PROP_BRIGHTNESS, 10)
 
 # 设置字典和参数
 dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 parameters = aruco.DetectorParameters()
+#parameters.maxErroneousBitsInBorderRate = 0.5
 
 # 实例化 ArucoDetector 对象
 detector = aruco.ArucoDetector(dictionary, parameters)
+frame = None
 
 # 初始化yolo
 #model = YOLO("yolo11n.pt")
@@ -28,33 +33,114 @@ detector = aruco.ArucoDetector(dictionary, parameters)
 center_x1, center_y1 = 0, 0
 center_x2, center_y2 = 0, 0
 center_x3, center_y3 = 0, 0
-center_x4, center_y4 = 0, 0
+temp_origin_x, temp_origin_y = [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]
+origin = np.array([0.0, 0.0])
+vec_origin = np.array([0.0, 0.0])
+run = 0
+
+# object坐标
+object = np.array([0.0, 0.0])
+object_direction = 0
+object_angle = 0
+object_pixel = 0.001
+object_cm = 0.001
 
 # ArUco码边长
-CM_OF_ARUCO = 1.5
-aruco_length_pixel = 0
+CM_OF_ARUCO = 2.1
+aruco_length_pixel = 0.001
 
 # soft pwm
-ARM1_PIN=1
-ARM2_PIN=1
-ROTATE_PIN=1
-HAND_PIN=1
+ARM1_PIN=3
+ARM2_PIN=4
+ROTATE_PIN=6
+HAND_PIN=9
 wiringpi.wiringPiSetup()
-wiringpi.pinMode(ARM1_PIN, OUTPUT)
-wiringpi.softPwmCreate(ARM1_PIN, 0, 200) # 周期:200ms
+wiringpi.pinMode(ARM1_PIN, wiringpi.GPIO.OUTPUT)
+wiringpi.pinMode(ARM2_PIN, wiringpi.GPIO.OUTPUT)
+wiringpi.pinMode(ROTATE_PIN, wiringpi.GPIO.OUTPUT)
+wiringpi.pinMode(HAND_PIN, wiringpi.GPIO.OUTPUT)
 
 
 
-def set_angle(pin, angle):
+# 机械臂当前角度
+ARM1_angle = 90
+ARM2_angle = 30 + (30)
+ROTATE_angle = 90
+HAND_angle = 30
+
+def set_angle(pin, angle, stop: bool = True, update_frame: bool = False):
+    global ARM1_angle, ARM2_angle, ROTATE_angle, HAND_angle
+    # 读取角度
+    if pin == ARM1_PIN:
+        angle_old = ARM1_angle
+    elif pin == ARM2_PIN:
+        angle_old = ARM2_angle
+    elif pin == ROTATE_PIN:
+        angle_old = ROTATE_angle
+    elif pin == HAND_PIN:
+        angle_old = HAND_angle
+
+    # 计算当前角度
+    angle_old = max(0, min(180, angle_old))
+    angle_ms_old = int(20 * (angle_old / 180) + 5)
+    angle_ms_old = max(0, min(24, angle_ms_old))
+
     angle = max(0, min(180, angle))
-    agnle_ms = 20 * (angle / 180) + 5
+    angle_ms = int(20 * (angle / 180) + 5)
+    angle_ms = max(0, min(24, angle_ms))
+
+    wiringpi.softPwmCreate(pin, 0, 200) # 周期:20ms
+    step = 1 if angle_ms > angle_ms_old else -1
+    for i in range(angle_ms_old, angle_ms + step, step):
+        wiringpi.softPwmWrite(pin, i)
+        time.sleep(0.087)
+    if stop:
+        wiringpi.softPwmStop(pin)
+
+    # 更新当前角度
+    if pin == ARM1_PIN:
+        ARM1_angle = angle
+    elif pin == ARM2_PIN:
+        ARM2_angle = angle
+    elif pin == ROTATE_PIN:
+        ROTATE_angle = angle
+    elif pin == HAND_PIN:
+        HAND_angle = angle
+
+
+
+
+def set_angle2(pin, angle, stop: bool = True, update_frame: bool = False):
+    angle = max(0, min(180, angle))
+    angle_ms = int(20 * (angle / 180) + 5)
+    angle_ms = max(0, min(24, angle_ms))
+
+    wiringpi.softPwmCreate(pin, 0, 200) # 周期:20ms
     wiringpi.softPwmWrite(pin, angle_ms)
+    if update_frame:
+        for i in range(4):
+            cv2.imshow("UI", frame)
+            time.sleep(0.15)
+    else:
+        time.sleep(0.6)
+    if stop:
+        wiringpi.softPwmStop(pin)
 
 
 
-def calculate_angles(x, y):  # 输入目标坐标
-    L1 = 10
-    L2 = 10
+
+# 方向初始化
+set_angle(ARM1_PIN, 90 - (15), update_frame=False)
+set_angle(ARM2_PIN, 30 + (30), update_frame=False)
+set_angle(ROTATE_PIN, 90, update_frame=False)
+set_angle(HAND_PIN, 30, update_frame=False)
+
+
+
+# 解三角形
+def calculate_angles(x, y):
+    L1 = 11
+    L2 = 11
     D_sq = x**2 + y**2
     D = math.sqrt(D_sq)
     
@@ -63,22 +149,53 @@ def calculate_angles(x, y):  # 输入目标坐标
         print("[error]目标超出机械臂工作范围")
         return None
 
-    # 计算 theta2 (小臂相对于大臂的角度)
+    # 计算 theta2 (小臂与大臂)
     cos_theta2 = (D_sq - L1**2 - L2**2) / (2 * L1 * L2)
     # 限制范围防止精度溢出
     cos_theta2 = max(-1, min(1, cos_theta2))
     theta2 = math.acos(cos_theta2)
 
-    # 计算 theta1 (大臂相对于基座的角度)
+    # 计算 theta1 (大臂与基座)
     alpha = math.atan2(y, x)
     
     cos_beta = (L1**2 + D_sq - L2**2) / (2 * L1 * D)
     cos_beta = max(-1, min(1, cos_beta))
     beta = math.acos(cos_beta)
     
-    theta1 = alpha - beta # 肘部向上模式
+    theta1 = -(alpha - beta) # 肘部向上
     
-    return math.degrees(theta1), math.degrees(theta2)
+    #print(f"小臂相对于竖直的角度:{(90 - math.degrees(theta1)):.1f}, 大臂相对于竖直的角度:{(90 - math.degrees(theta2)):.1f}")
+    print(f"[log]{(90 - math.degrees(theta1)):.1f}, {(90 - math.degrees(theta2)):.1f}")
+    return 90 - math.degrees(theta1), 90 - math.degrees(theta2)
+
+
+# 机械臂动作运行
+def execute_arm_sequence(theta1, theta2):
+    # 初始化
+    set_angle(ARM2_PIN, 30 + (30))
+    set_angle(ARM1_PIN, 90 - (15))
+
+    set_angle(ROTATE_PIN, int(90 + object_direction * object_angle + 15))
+
+    # 机械臂运动
+    #wiringpi.softPwmCreate(ARM1_PIN, 0, 200) # 周期:20ms
+    set_angle(ARM1_PIN, 90 + theta2 + 40 - (15))
+    #wiringpi.softPwmCreate(ARM2_PIN, 0, 200) # 周期:20ms
+    set_angle(ARM2_PIN, theta1 + 28 + (30))
+    #wiringpi.softPwmStop(ARM2_PIN)
+    #wiringpi.softPwmStop(ARM1_PIN)
+    cv2.waitKey(400)
+
+    # 夹爪抓取
+    set_angle(HAND_PIN, 100)
+
+    # 机械臂复位&放下
+    set_angle(ARM1_PIN, 90 - (15))
+    set_angle(ARM2_PIN, 30 + (30))
+    set_angle(ROTATE_PIN, 90 + (15))
+    set_angle(ARM1_PIN, 90 + 60 - (15))
+
+    set_angle(HAND_PIN, 30)
 
 
 
@@ -86,6 +203,9 @@ while True:
     ret, frame = cap.read()
     if not ret:
         break
+
+
+    frame = cv2.convertScaleAbs(frame, alpha=1.0, beta=0)  # 曝光
 
     ###########################底座坐标ArUco检测部分###########################
     corners, ids, rejected = detector.detectMarkers(frame)
@@ -110,36 +230,41 @@ while True:
                 center_x1, center_y1 = center_x, center_y
 
                 # 计算平均边长
-                # 将点错位排列，方便一次性计算 AB, BC, CD, DA
-                # pts:     [A, B, C, D]
-                # rolled:  [B, C, D, A]
+                # 点错位排列，计算 AB, BC, CD, DA
+                # pts: [A, B, C, D]
+                # rolled_pts: [B, C, D, A]
                 rolled_pts = np.roll(pts, -1, axis=0)
 
-                # np.linalg.norm 计算欧几里得范数，即两点间距离
+                # 计算两点间距离
                 edge_lengths = np.linalg.norm(pts - rolled_pts, axis=1)
 
                 # 平均边长
                 aruco_length_pixel = np.mean(edge_lengths)
-                print(f"[log]平均边长: {aruco_length_pixel:.2f}")
-                
+                #print(f"[log]平均边长: {aruco_length_pixel:.2f}")
+            
             if id == 2:
                 center_x2, center_y2 = center_x, center_y
             
-            if id == 3:
-                center_x3, center_y3 = center_x, center_y
+            if id == 1 or id == 2:
+                # 原点偏移计算
+                VEC_SCALE = 4
+                vec_origin = VEC_SCALE * (pts[2] - pts[1])
+                
+                # 原点计算
+                temp_origin_x = temp_origin_x[1:]
+                temp_origin_x.append((center_x1 + center_x2) / 2 + vec_origin[0])
+                temp_origin_y = temp_origin_y[1:]
+                temp_origin_y.append((center_y1 + center_y2) / 2 + vec_origin[1])
+                origin[0] = sum(temp_origin_x) / len(temp_origin_x)
+                origin[1] = sum(temp_origin_y) / len(temp_origin_y)
+                cv2.circle(frame, (int(origin[0]), int(origin[1])), 5, (0, 0, 255), -1)
+                #print(f"[log]原点坐标({origin[0]:.1f}, {origin[1]:.1f})")
+            
 
-            if id == 4:
-                center_x4, center_y4 = center_x, center_y
-            
-            # 原点偏移计算
-            VEC_SCALE = 2
-            vec = VEC_SCALE * (pts[2] - pts[1])
-            
-            # 原点计算
-            origin_x = (center_x1 + center_x2) / 2 + vec[0]
-            origin_y = (center_y1 + center_y2) / 2 + vec[1]
-            cv2.circle(frame, (int(origin_x), int(origin_y)), 5, (255, 0, 0), -1)
-            print(f"[log]原点坐标({origin_x}, {origin_y})")
+            if id == 3:
+                object[0], object[1] = center_x, center_y
+                #print(f"[log]object坐标({object[0]:.1f}, {object[1]:.1f})")
+
 
 
 
@@ -163,18 +288,53 @@ while True:
 #                cv2.putText(frame, f"{class_name} {conf:.2f}", (x1, y1-10),
 #                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    if cv2.waitKey(1) == 13:
-        set_angle(ROTATE_PIN, 0)
-        cv2.waitKey(500)
-        distance_id3 = math.sqrt((center_x3-center_x)**2+(center_y3-center_y)**2)
-        
-
-
-
     cv2.imshow("UI", frame)
 
+    key = cv2.waitKey(1)
+    if key == 13:
+        # 计算物体相对于原点的信息
+        vec_object = object - origin
+
+        # object角度
+        _dot_product = np.dot(vec_origin, vec_object)
+        _length_origin = np.linalg.norm(vec_origin)
+        _length_object = np.linalg.norm(vec_object)
+        _cos_theta = _dot_product / (_length_origin * _length_object)
+        _cos_theta = np.clip(_cos_theta, -1.0, 1.0)
+
+        object_angle = np.degrees(np.arccos(_cos_theta))
+        #print(f"[log]object角度({object_angle})")
+
+        # object距离
+        object_pixel = _length_object + 0.5 * np.linalg.norm(vec_origin)
+        object_cm = object_pixel * (CM_OF_ARUCO / aruco_length_pixel) - 0
+        print(f"[log]object距离({object_cm:.1f})")
+
+        # 角度计算
+        _cross_product = vec_origin[0] * vec_object[1] - vec_origin[1] * vec_object[0]
+        if _cross_product > 0:
+            object_direction = -1
+        elif _cross_product < 0:
+            object_direction = 1
+        else:
+            object_direction = 0
+
+
+        # 计算角度
+        if (result := calculate_angles(object_cm, 2.5)) is None:
+            continue
+        else:
+            theta1, theta2 = result
+
+        # 执行机械臂动作
+        #arm_thread = threading.Thread(target=execute_arm_sequence, args=(theta1, theta2))
+        #arm_thread.daemon = True
+        #arm_thread.start()
+        execute_arm_sequence(theta1, theta2)
+
+
     # ESC退出
-    if cv2.waitKey(1) == 27:
+    if key == 27:
         break
 
 cap.release()
