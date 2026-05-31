@@ -16,6 +16,7 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 cap.set(cv2.CAP_PROP_CONTRAST, 100)
 cap.set(cv2.CAP_PROP_BRIGHTNESS, 10)
+frame = None
 
 # 设置字典和参数
 dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
@@ -24,7 +25,6 @@ parameters = aruco.DetectorParameters()
 
 # 实例化 ArucoDetector 对象
 detector = aruco.ArucoDetector(dictionary, parameters)
-frame = None
 
 # 初始化yolo
 #model = YOLO("yolo11n.pt")
