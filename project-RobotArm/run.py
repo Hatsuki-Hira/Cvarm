@@ -181,7 +181,7 @@ def execute_arm_sequence(theta1, theta2):
     #wiringpi.softPwmCreate(ARM1_PIN, 0, 200) # 周期:20ms
     set_angle(ARM1_PIN, 90 + theta2 + 40 - (15))
     #wiringpi.softPwmCreate(ARM2_PIN, 0, 200) # 周期:20ms
-    set_angle(ARM2_PIN, theta1 + 28 + (30))
+    set_angle(ARM2_PIN, theta1 + 0 + (30))
     #wiringpi.softPwmStop(ARM2_PIN)
     #wiringpi.softPwmStop(ARM1_PIN)
     cv2.waitKey(400)
