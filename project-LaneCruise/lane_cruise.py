@@ -1,6 +1,7 @@
 import cv2
 import time
 import numpy as np
+import math
 
 
 
@@ -62,7 +63,7 @@ def er_zhi(frame_input):
 #        kernel
 #    )
 
-    cv2.imshow("二值化", frame_output)
+    cv2.imshow("erzhi", frame_output)
 
     return frame_output
 
@@ -94,8 +95,11 @@ def tou_shi_bian_huan(frame_input):
 
 
 
+k = 0  # 偏移斜率
+distance = 0  # 偏移距离
 # 寻找最长白线
 def find_white_line(gray, frame):
+    global k, distance
     center_points_list = []
     for y in range(360, 720, 7):
         line = gray[y]  # 画面行
@@ -159,6 +163,7 @@ def find_white_line(gray, frame):
     vy = vy[0]
     x0 = x0[0]
     y0 = y0[0]
+    k = vy / vx
     # 直线(x-x0)/vx = (y-y0)/vy
     near_y = 720
     far_y = 360
@@ -170,6 +175,8 @@ def find_white_line(gray, frame):
 
     center_x = int(np.mean(center_points[:,0]))
     center_y = int(np.mean(center_points[:,1]))
+    # 求偏移距离
+    distance = 720 - center_x
     # 画指向
     cv2.line(frame, (near_x, near_y), (center_x, center_y), (255,0,0), 3)
     cv2.arrowedLine(frame, (center_x, center_y), (far_x, far_y), (255,0,0), 3)
@@ -179,7 +186,7 @@ def find_white_line(gray, frame):
     
 
 
-
+filtered_k_theta = 0  # 偏移角度（已滤波）
 while True:
     # 摄像头非正常退出
     ret, frame = cap.read()
@@ -189,11 +196,24 @@ while True:
     
     gray = er_zhi(frame)
     find_white_line(gray, frame)
+    
+    # 计算偏移数值
+    theta = 90 - math.degrees(math.atan(k))
+    if theta > 90:
+        theta = -(180 - theta)
+
+    alpha = 0.8
+
+    filtered_k_theta = (
+        alpha * filtered_k_theta
+        + (1-alpha) * theta
+    )
 
     # UI绘制
     fpstimer.count()
-    cv2.putText(frame, f"FPS:{fpstimer.fps}", (10, 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f"FPS:{fpstimer.fps}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f"direction from center :{theta:.1f}'", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f"distance from center :{distance}pixel", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     cv2.imshow("UI", frame)
 
     # ESC退出
